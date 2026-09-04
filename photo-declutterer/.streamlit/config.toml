@@ -1,0 +1,14 @@
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[server]
+port = 8501
+headless = false          # opens browser tab automatically
+
+[theme]
+base = "light"
+primaryColor = "#4A90D9"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F4F8"
+textColor = "#1A1A2E"

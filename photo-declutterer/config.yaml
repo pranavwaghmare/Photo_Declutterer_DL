@@ -1,0 +1,57 @@
+# ── Photo De-Clutterer — global configuration ─────────────────────────────────
+# All paths are relative to the project root unless stated otherwise.
+# CLI flags override these values.
+
+paths:
+  raw_input:       "data/raw"
+  processed_dir:   "data/processed"
+  results_parquet: "data/processed/results.parquet"
+  embeddings_cache: "data/processed/embeddings.npy"
+  ids_cache:        "data/processed/embedding_ids.json"
+  trash_dir:        "data/trash"
+  reports_dir:      "reports"
+
+ingest:
+  supported_extensions: [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp", ".heic"]
+
+preprocess:
+  target_size: [224, 224]          # width, height — ResNet/CLIP canonical size
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std:  [0.229, 0.224, 0.225]
+
+blur_quality:
+  laplacian_threshold: 100.0       # below this → blurry heuristic
+  model: "resnet50"                # "cnn" | "resnet50" | "laplacian_only"
+  checkpoint: "data/processed/certh_checkpoints/resnet50_blur_best.pth"
+  quality_threshold: 0.5           # classifier confidence threshold
+
+embeddings:
+  clip_model: "ViT-B-32"
+  clip_pretrained: "openai"
+  batch_size: 64
+  device: "auto"                   # "auto" | "cpu" | "cuda"
+
+dedup_cluster:
+  eps: 0.15                        # DBSCAN epsilon (cosine distance)
+  min_samples: 2
+  ann_neighbors: 50                # pre-filter neighbors via sklearn NearestNeighbors
+
+content_cluster:
+  n_clusters: 10                   # K for K-Means; set to null for auto (elbow)
+  max_k: 20                        # upper bound when auto-selecting K
+  random_state: 42
+  zero_shot_labels:
+    - "people and portraits"
+    - "food and drinks"
+    - "documents and text"
+    - "nature and landscapes"
+    - "screenshots and UI"
+    - "animals and pets"
+    - "architecture and buildings"
+    - "events and celebrations"
+    - "travel and tourism"
+    - "abstract and art"
+
+recommend:
+  quality_delete_threshold: 50.0   # Laplacian variance below this → candidate for delete
+  min_resolution: 100000           # width*height minimum to keep; below → downgrade score
