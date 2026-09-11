@@ -11,3 +11,6 @@ venv/
 *.ckpt
 data/
 datasets/
+*.log
+.pytest_cache/
+reports/*.png
