@@ -1,0 +1,236 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\newcommand{\project}{Photo De-Clutterer}
+
+\begin{document}
+
+\title{An Explainable Deep Learning Pipeline for Photo Quality Assessment and De-Cluttering}
+
+\author{\IEEEauthorblockN{Pranav Waghmare}
+\IEEEauthorblockA{\textit{Department of Computer Engineering}\\
+\textit{[Institution Name]}\\
+India\\
+p.waghmare.2006@gmail.com}}
+
+\maketitle
+
+\begin{abstract}
+Personal photo libraries grow rapidly, but finding blurry images, redundant captures, and poorly organised content remains a largely manual task. This paper presents \project{}, an end-to-end pipeline that combines classical computer vision, convolutional neural networks, image-language embeddings, clustering, and human review. The system ingests a folder of images, extracts metadata, estimates visual quality, detects near-duplicates with CLIP embeddings and DBSCAN, groups images by semantic content, and produces explainable Keep or Delete recommendations. A Streamlit interface lets users inspect recommendations and move selected files to a trash directory without permanent deletion. On the CERTH Image Blur Dataset evaluation set, a fine-tuned ResNet50 achieved 86.96 percent accuracy, 0.8349 precision, 0.8578 recall, and 0.8462 F1 for the sharp class, compared with 79.93 percent accuracy for the Laplacian baseline. The paper describes the system design, recommendation policy, implementation, evaluation, limitations, and future work.
+\end{abstract}
+
+\begin{IEEEkeywords}
+photo management, image quality assessment, CLIP, DBSCAN, K-Means, explainable recommendations, human-in-the-loop
+\end{IEEEkeywords}
+
+\section{Introduction}
+Digital cameras and smartphones have made image capture nearly frictionless. The resulting libraries contain repeated shots, out-of-focus frames, screenshots, documents, and images that are difficult to locate later. Conventional file browsers expose storage locations and timestamps, but they do not provide a unified answer to a practical question: which images should a person keep?
+
+Photo organisation is difficult because the decision is not one-dimensional. A photo may be technically sharp but redundant, semantically useful but low resolution, or visually similar to another image while still being the preferred frame. A useful system must therefore combine quality assessment, redundancy analysis, semantic grouping, and a review mechanism that keeps the user in control.
+
+This work presents \project{}, a modular photo de-cluttering pipeline designed around that requirement. The system uses a fast Laplacian-variance heuristic for low-cost quality scoring and supports learned blur classifiers based on a lightweight convolutional neural network or fine-tuned ResNet50. It uses CLIP image embeddings for near-duplicate detection and content clustering. Recommendations are generated from quality, resolution, and within-cluster similarity signals, while the final file operation is deliberately conservative: the application moves user-selected files to a trash directory instead of deleting them permanently.
+
+The main contributions of this work are:
+\begin{itemize}
+    \item an end-to-end, cache-aware pipeline that unifies ingest, quality scoring, embedding extraction, clustering, recommendation, and result export;
+    \item a recommendation policy that selects one representative from a near-duplicate cluster while separately flagging low-quality singleton images;
+    \item an explainable review interface that exposes quality, similarity, category, and recommendation information before any file is moved; and
+    \item an evaluation of the blur-quality component on the CERTH Image Blur Dataset, including comparison with a Laplacian baseline.
+\end{itemize}
+
+\section{Related Work}
+Image sharpness estimation has a long history of hand-crafted focus measures. Laplacian variance is attractive in practical systems because it is inexpensive and does not require a model download. However, its score depends on image texture, edges, compression, and scene content. Learned approaches can model a wider range of blur patterns when representative training data is available.
+
+Large-scale image organisation has also benefited from visual representations learned from image-text supervision. CLIP maps images and text into a shared embedding space, making it useful both for similarity search and for assigning human-readable semantic labels \cite{radford2021learning}. In \project{}, image embeddings support two related but distinct operations: DBSCAN identifies groups of near-duplicate images, while K-Means provides broader content groupings.
+
+DBSCAN is suitable for redundancy analysis because it does not require the number of duplicate groups to be known in advance and can label isolated samples as noise \cite{ester1996density}. K-Means is used for content grouping because it provides a compact partition of the embedding space. Silhouette analysis can select a value of $K$ when a fixed number of categories is not specified \cite{rousseeuw1987silhouettes}.
+
+\section{System Design}
+\subsection{Design Goals}
+The system was designed around four practical goals. First, each processing stage should be independently testable and replaceable. Second, the output should preserve enough evidence for a user to understand a recommendation. Third, repeat runs should avoid recomputing expensive embeddings when the input set has not changed. Finally, automation should not create irreversible data loss.
+
+Figure~\ref{fig:pipeline} summarises the system flow. The implementation exports a Parquet table containing stable image identifiers, file paths, capture timestamps, quality values, embeddings, cluster labels, content categories, and recommendations.
+
+\begin{figure}[htbp]
+\centering
+\setlength{\fboxsep}{5pt}
+\fbox{\parbox{0.95\columnwidth}{
+\centering
+Ingest and metadata\\
+$\downarrow$\\
+Quality scoring\\
+$\downarrow$\\
+CLIP image embeddings\\
+$\swarrow$\hspace{2.0cm}$\searrow$\\
+Near-duplicate DBSCAN\hspace{0.45cm}Content K-Means\\
+$\searrow$\hspace{2.0cm}$\swarrow$\\
+Recommendation and review\\
+$\downarrow$\\
+Parquet results and optional trash move
+}}
+\caption{The end-to-end \project{} processing flow.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Ingest and Identity}
+The ingest stage recursively scans a configured input folder for supported image extensions. For each readable file it records the absolute path, file size, image dimensions, and capture timestamp when available. A SHA-256 content hash is used as the image identifier. This makes the downstream table independent of filename changes and provides a stable key for embedding caches.
+
+Unreadable or unsupported files are skipped with a warning. The metadata table is stored separately from the final result table, allowing later stages to resume without rescanning the library.
+
+\subsection{Image Quality Assessment}
+The default fast quality signal is the variance of the grayscale Laplacian:
+\begin{equation}
+    q_{\mathrm{lap}}(I) = \operatorname{Var}(\nabla^2 I),
+\end{equation}
+where larger values generally indicate stronger local edges and therefore greater apparent sharpness. A configurable threshold converts this score into a sharp or blurry label.
+
+The implementation also provides two learned alternatives. BlurCNN is a lightweight custom classifier, while the ResNet50 option replaces the ImageNet classification head with a two-class sharp or blurry head and fine-tunes it on a CERTH-style directory structure. The selected model is independent of the later CLIP embedding stage, allowing a fast Laplacian-only run when resources are limited.
+
+\subsection{CLIP Embeddings}
+The pipeline uses the OpenAI-pretrained ViT-B/32 configuration through OpenCLIP. For an image $I_i$, the encoder produces an embedding $z_i$. Embeddings are L2-normalised before distance or clustering operations:
+\begin{equation}
+    \hat{z}_i = \frac{z_i}{\lVert z_i \rVert_2}.
+\end{equation}
+The embedding matrix and its corresponding image identifiers are cached on disk. Cache reuse is controlled by image identifiers and can be disabled with a force-recompute option.
+
+\subsection{Near-Duplicate Clustering}
+Near-duplicate analysis operates on cosine distance,
+\begin{equation}
+    d_{\mathrm{cos}}(i,j) = 1 - \hat{z}_i^{\mathsf{T}}\hat{z}_j.
+\end{equation}
+DBSCAN assigns images to clusters using an $\varepsilon$ neighborhood radius and a minimum sample count. The default configuration uses $\varepsilon=0.15$ and a minimum cluster size of two. Samples labelled $-1$ are treated as singletons for recommendation purposes.
+
+For each non-singleton cluster, the system computes the cosine similarity of every member to the normalised cluster centroid. This produces a similarity value that is shown in the review interface and used as one component of representative selection. A nearest-neighbor path is available for larger collections, while smaller collections use exact cosine distances.
+
+\subsection{Content Clustering and Labelling}
+Content clustering applies K-Means to the normalised CLIP vectors. The user may provide a fixed $K$ or enable silhouette-based selection over a configured range. When a CLIP model and candidate text labels are available, each cluster centroid is compared with the text embeddings of labels such as ``people and portraits,'' ``documents and text,'' and ``nature and landscapes.'' The highest-scoring label becomes the content category. If zero-shot labelling is unavailable, stable generic names such as ``cluster\_0'' are retained.
+
+\subsection{Recommendation Policy}
+The recommendation stage distinguishes duplicate clusters from singleton images. Within a duplicate cluster, the system computes a composite score:
+\begin{equation}
+    s_i = w_q\tilde{q}_i + w_r\tilde{r}_i + w_c c_i,
+\end{equation}
+where $\tilde{q}_i$ is min-max-normalised Laplacian variance, $\tilde{r}_i$ is min-max-normalised resolution, and $c_i$ is similarity to the cluster centroid. The default weights are $w_q=0.5$, $w_r=0.3$, and $w_c=0.2$. The highest-scoring member is marked ``Keep'' and the other members are marked ``Delete.''
+
+For a singleton image, the system does not compare it with other images. It is marked ``Keep'' when its Laplacian score meets the configured quality threshold and ``Delete'' otherwise. In both cases, ``Delete'' means a review recommendation, not an immediate filesystem operation.
+
+\subsection{Human-in-the-Loop Review}
+The Streamlit interface loads the Parquet result table and provides duplicate-group and content-category views. Each image card displays a thumbnail when available, the current recommendation, blur label, Laplacian score, similarity score, and semantic category. Users can override any checkbox before confirmation. Confirmed files are moved to a configured trash directory, with collision-safe renaming. The implementation never calls a permanent delete operation.
+
+\section{Implementation}
+The system is implemented in Python using OpenCV, Pillow, pandas, PyTorch, torchvision, OpenCLIP, scikit-learn, PyYAML, and Streamlit. Configuration is stored in YAML so that model selection, thresholds, clustering parameters, cache locations, and output paths can be changed without editing the pipeline.
+
+The final output schema is shown in Table~\ref{tab:schema}. The schema is enforced before the result table is written, which makes it possible for the review UI and later analysis scripts to depend on stable column names.
+
+\begin{table}[htbp]
+\caption{Final result schema}
+\label{tab:schema}
+\centering
+\begin{tabular}{p{0.32\columnwidth} p{0.57\columnwidth}}
+\hline
+\textbf{Field} & \textbf{Meaning} \\
+\hline
+Image\_ID & SHA-256-based image identifier \\
+File\_Path & Source image path \\
+Capture\_Timestamp & EXIF timestamp or file modification time \\
+Laplacian\_Variance & Sharpness heuristic score \\
+Blur\_Quality\_Label & Sharp or blurry label \\
+CNN\_Embedding\_Vector & CLIP image embedding \\
+Duplicate\_Cluster\_ID & DBSCAN group; $-1$ denotes a singleton \\
+Similarity\_Score & Similarity to duplicate-cluster centroid \\
+Content\_Category & K-Means or zero-shot category \\
+Keep\_Recommendation & Keep or Delete review recommendation \\
+\hline
+\end{tabular}
+\end{table}
+
+The processing sequence is resumable. Metadata, tensors, embeddings, and identifiers are cached in the processed-data directory. The force-recompute flag invalidates these caches when a model or input configuration changes. This is important because CLIP model initialisation can download weights and embedding extraction is substantially more expensive than the metadata stage.
+
+\begin{algorithm}[htbp]
+\caption{Photo de-cluttering pipeline}
+\label{alg:pipeline}
+\begin{algorithmic}[1]
+\STATE $D \leftarrow$ ingest image files and metadata
+\STATE $Q \leftarrow$ compute Laplacian or learned quality scores
+\STATE $Z \leftarrow$ load or extract CLIP embeddings for $D$
+\STATE $G \leftarrow$ DBSCAN($Z$, cosine distance)
+\STATE $C \leftarrow$ K-Means($Z$) with optional zero-shot labels
+\FOR{each duplicate group in $G$}
+    \STATE score members using quality, resolution, and centroid similarity
+    \STATE keep the highest-scoring member; flag the rest
+\ENDFOR
+\FOR{each singleton in $G$}
+    \STATE flag it when its quality score is below the configured threshold
+\ENDFOR
+\STATE export the schema-constrained result table
+\end{algorithmic}
+\end{algorithm}
+
+\section{Experimental Evaluation}
+\subsection{Blur Classification Protocol}
+The blur classifier was evaluated using the CERTH Image Blur Dataset. The reported training split contained approximately 1,150 images, with 630 sharp and 520 blurry examples. The held-out EvaluationSet contained 1,480 images, including 619 sharp and 861 blurry examples from natural and digital blur categories.
+
+The experiment compared a fine-tuned ResNet50, a lightweight BlurCNN, and the Laplacian baseline. The two learned models used the CERTH directory convention with separate sharp and blurry folders. Accuracy, precision, recall, and F1 were calculated for the sharp class. The Laplacian baseline used a threshold of 100.
+
+\subsection{Results}
+Table~\ref{tab:blur-results} reports the results documented by the project evaluation. The fine-tuned ResNet50 achieved the highest accuracy and F1. Its accuracy improvement over the Laplacian baseline was 6.03 percentage points. The Laplacian baseline had higher sharp-class precision than the learned models, but its recall was only 0.5880, meaning that it missed a substantial fraction of sharp images. The learned ResNet50 provided a more balanced result for use as a quality signal.
+
+\begin{table}[htbp]
+\caption{CERTH Image Blur Dataset evaluation}
+\label{tab:blur-results}
+\centering
+\begin{tabular}{lcccc}
+\hline
+\textbf{Model} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\hline
+BlurCNN & 0.8041 & 0.7466 & 0.8045 & 0.7745 \\
+ResNet50 fine-tuned & \textbf{0.8696} & \textbf{0.8349} & \textbf{0.8578} & \textbf{0.8462} \\
+Laplacian, threshold 100 & 0.7993 & 0.8966 & 0.5880 & 0.7102 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Pipeline Verification}
+The repository includes unit and integration tests for folder scanning, image ingestion, metadata export, Laplacian scoring, recommendation labels, clustering helpers, model construction, and final pipeline schema enforcement. The end-to-end pipeline test replaces CLIP extraction with deterministic mock embeddings so that schema and control-flow behavior can be tested without a network download or external image dataset.
+
+The tests verify that every final result contains the required fields, that duplicate clusters contain exactly one retained representative, and that low-quality singleton images are flagged according to the configured threshold. These tests are behavioral checks rather than a substitute for evaluation on a representative personal photo library.
+
+\section{Discussion}
+The evaluation demonstrates that learned blur classification can improve balance between precision and recall compared with a single Laplacian threshold. However, quality classification alone does not solve photo organisation. The main value of the proposed system is the combination of signals: a duplicate cluster can identify redundancy, a centroid similarity can help identify a representative, and semantic categories can make the review process navigable.
+
+The design also treats automation and trust as related engineering concerns. Recommendations expose the evidence used by the system, while the final action is user-confirmed and reversible through a trash directory. This is preferable to silently deleting images because visual similarity does not imply that two photos have equal personal value.
+
+There are several limitations. First, the current quantitative evaluation covers blur classification but does not yet report precision, recall, or F1 for duplicate clustering on INRIA Holidays or UKBench. Second, the content labels are dependent on CLIP text-image alignment and may not match a user's preferred taxonomy. Third, the default CLIP model and ResNet50 can be resource-intensive on CPU-only systems. Fourth, the recommendation weights and thresholds are configurable heuristics rather than parameters learned from user decisions. Finally, the current prototype is a local Streamlit application and does not yet include an account system, cloud connectors, or a longitudinal user study.
+
+\section{Future Work}
+Future work will evaluate duplicate clustering against labelled retrieval benchmarks and test the sensitivity of DBSCAN's cosine-distance threshold across different camera and compression conditions. A user study could measure review time, override rates, and perceived trust compared with manual file browsing. The recommendation model could also learn from user overrides while retaining a transparent explanation for each decision.
+
+Additional engineering work includes incremental processing for continuously changing folders, duplicate detection across image transformations, privacy-preserving embedding options, and a more efficient approximate-neighbor index for very large libraries. A calibrated uncertainty score would allow the interface to distinguish high-confidence recommendations from cases that require closer human inspection.
+
+\section{Conclusion}
+This paper presented \project{}, a modular deep learning system for photo quality assessment, near-duplicate detection, semantic grouping, and human-reviewed clean-up. The system combines a fast Laplacian heuristic with optional learned blur classifiers, CLIP embeddings, DBSCAN, K-Means, and an explainable Streamlit interface. On the CERTH evaluation set, the fine-tuned ResNet50 achieved 86.96 percent accuracy and an F1 score of 0.8462 for the sharp class, outperforming the Laplacian baseline in balanced performance. The resulting prototype shows how complementary computer-vision signals can be assembled into a practical and safer photo-management workflow.
+
+\section*{Acknowledgment}
+The author thanks Dr. Sushopti Gawade for mentorship and guidance during the development of this project.
+
+\begin{thebibliography}{00}
+\bibitem{pertuz2013focus} S. Pertuz, D. Puig, and M. A. Garcia, ``Analysis of focus measure operators for shape-from-focus,'' \emph{Pattern Recognition}, vol. 46, no. 5, pp. 1415--1432, 2013.
+\bibitem{radford2021learning} A. Radford \emph{et al.}, ``Learning transferable visual models from natural language supervision,'' in \emph{Proc. ICML}, 2021, pp. 8748--8763.
+\bibitem{ester1996density} M. Ester, H.-P. Kriegel, J. Sander, and X. Xu, ``A density-based algorithm for discovering clusters in large spatial databases with noise,'' in \emph{Proc. KDD}, 1996, pp. 226--231.
+\bibitem{rousseeuw1987silhouettes} P. J. Rousseeuw, ``Silhouettes: A graphical aid to the interpretation and validation of cluster analysis,'' \emph{Journal of Computational and Applied Mathematics}, vol. 20, pp. 53--65, 1987.
+\bibitem{he2016deep} K. He, X. Zhang, S. Ren, and J. Sun, ``Deep residual learning for image recognition,'' in \emph{Proc. IEEE CVPR}, 2016, pp. 770--778.
+\bibitem{tong2004blur} H. Tong, M. Li, H.-J. Zhang, J. He, and C. Zhang, ``Blur detection for digital images using wavelet transform,'' in \emph{Proc. IEEE ICME}, 2004, vol. 1, pp. 17--20.
+\end{thebibliography}
+
+\end{document}
