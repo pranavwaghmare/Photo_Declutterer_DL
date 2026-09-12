@@ -13,4 +13,5 @@ data/
 datasets/
 *.log
 .pytest_cache/
+.coverage
 reports/*.png
