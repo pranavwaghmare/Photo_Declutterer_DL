@@ -50,7 +50,7 @@ The main contributions of this work are:
 \end{itemize}
 
 \section{Related Work}
-Image sharpness estimation has a long history of hand-crafted focus measures. Laplacian variance is attractive in practical systems because it is inexpensive and does not require a model download. However, its score depends on image texture, edges, compression, and scene content. Learned approaches can model a wider range of blur patterns when representative training data is available.
+Image sharpness estimation has a long history of hand-crafted focus measures. Laplacian variance is attractive in practical systems because it is inexpensive and does not require a model download \cite{pertuz2013focus}. However, its score depends on image texture, edges, compression, and scene content. Learned approaches can model a wider range of blur patterns when representative training data is available.
 
 Large-scale image organisation has also benefited from visual representations learned from image-text supervision. CLIP maps images and text into a shared embedding space, making it useful both for similarity search and for assigning human-readable semantic labels \cite{radford2021learning}. In \project{}, image embeddings support two related but distinct operations: DBSCAN identifies groups of near-duplicate images, while K-Means provides broader content groupings.
 
@@ -95,7 +95,7 @@ The default fast quality signal is the variance of the grayscale Laplacian:
 \end{equation}
 where larger values generally indicate stronger local edges and therefore greater apparent sharpness. A configurable threshold converts this score into a sharp or blurry label.
 
-The implementation also provides two learned alternatives. BlurCNN is a lightweight custom classifier, while the ResNet50 option replaces the ImageNet classification head with a two-class sharp or blurry head and fine-tunes it on a CERTH-style directory structure. The selected model is independent of the later CLIP embedding stage, allowing a fast Laplacian-only run when resources are limited.
+The implementation also provides two learned alternatives. BlurCNN is a lightweight custom classifier, while the ResNet50 option replaces the ImageNet classification head with a two-class sharp or blurry head and fine-tunes it on a CERTH-style directory structure \cite{he2016deep}. The selected model is independent of the later CLIP embedding stage, allowing a fast Laplacian-only run when resources are limited.
 
 \subsection{CLIP Embeddings}
 The pipeline uses the OpenAI-pretrained ViT-B/32 configuration through OpenCLIP. For an image $I_i$, the encoder produces an embedding $z_i$. Embeddings are L2-normalised before distance or clustering operations:
@@ -184,7 +184,7 @@ The blur classifier was evaluated using the CERTH Image Blur Dataset. The report
 The experiment compared a fine-tuned ResNet50, a lightweight BlurCNN, and the Laplacian baseline. The two learned models used the CERTH directory convention with separate sharp and blurry folders. Accuracy, precision, recall, and F1 were calculated for the sharp class. The Laplacian baseline used a threshold of 100.
 
 \subsection{Results}
-Table~\ref{tab:blur-results} reports the results documented by the project evaluation. The fine-tuned ResNet50 achieved the highest accuracy and F1. Its accuracy improvement over the Laplacian baseline was 6.03 percentage points. The Laplacian baseline had higher sharp-class precision than the learned models, but its recall was only 0.5880, meaning that it missed a substantial fraction of sharp images. The learned ResNet50 provided a more balanced result for use as a quality signal.
+Table~\ref{tab:blur-results} reports the results documented by the project evaluation. The fine-tuned ResNet50 achieved the highest accuracy and F1. Its accuracy improvement over the Laplacian baseline was 7.03 percentage points. The Laplacian baseline had higher sharp-class precision than the learned models, but its recall was only 0.5880, meaning that it missed a substantial fraction of sharp images. The learned ResNet50 provided a more balanced result for use as a quality signal.
 
 \begin{table}[htbp]
 \caption{CERTH Image Blur Dataset evaluation}
