@@ -149,8 +149,16 @@ def run_pipeline(
         checkpoint = blur_cfg.get("checkpoint")
         model_type = blur_cfg.get("model", "laplacian_only")
         if checkpoint and model_type == "resnet50":
-            logger.info("Loading ResNet50 blur model from %s …", checkpoint)
-            blur_model = build_resnet50(checkpoint=checkpoint)
+            checkpoint_path = Path(checkpoint)
+            if checkpoint_path.exists():
+                logger.info("Loading ResNet50 blur model from %s …", checkpoint)
+                blur_model = build_resnet50(checkpoint=checkpoint)
+            else:
+                logger.warning(
+                    "ResNet50 checkpoint %s was not found; falling back to "
+                    "Laplacian-only blur scoring.",
+                    checkpoint,
+                )
         df = add_blur_scores(
             df,
             model=blur_model,
